@@ -41,23 +41,23 @@ function getMagentoConfig(settings) {
   var result = new Future();
   console.log(config);
   client.methodCall('login', [ config.login, config.pass ], function(err, sessionId) {
-    if (err) {
-      console.log("Login Error: " + err);
-      response = {
-        successful : false,
-        error: err.message
-      }
-    } else {
-      console.log('session-id:' + sessionId);
-      response = {
-        successful: true,
-        client: client
-      }
-    }
-    return result.return(response);
-  });
-  return result.wait();
-  */
+  if (err) {
+  console.log("Login Error: " + err);
+  response = {
+  successful : false,
+  error: err.message
+}
+} else {
+console.log('session-id:' + sessionId);
+response = {
+successful: true,
+client: client
+}
+}
+return result.return(response);
+});
+return result.wait();
+*/
 }
 
 export const methods = {
@@ -97,37 +97,51 @@ export const methods = {
       //get product list
       var productList = new Future();
       magento.catalog_product.list(function(err, products) {
-          productList.return(products);
+        productList.return(products);
       });
 
+      var products=productList.wait().slice(1,3);
       //grab data for each product in list and add to reaction
-      productList.wait().forEach(function(data) {
+      products.forEach(function(data) {
         var productInfo = new Future();
         magento.catalog_product.info(data.product_id, function(err, product){
           productInfo.return(product);
         });
         var product = productInfo.wait();
         console.log(product);
+        /*var productId = Meteor.call("products/createProduct", (error, productId) => {
+        if (error) {
+        throw new Meteor.Error("create-product-error", error);
+      }
+      return productId;
+    });
+    Meteor.call("products/updateProductField", productId, "label", product.name);
+    */
+
+    var productId = Products.insert({
+      type: "simple", // needed for multi-schema
+      title: product.name,
+      pageTitle: product.name,
+      description: product.description,
+      magento_import: true
+    }, {
+      validate: false
+    }, (error, result) => {
+      // additionally, we want to create a variant to a new product
+      if (result) {
         Products.insert({
-          type: "simple", // needed for multi-schema
-          label: product.name
-          }, {
-            validate: false
-          }, (error, result) => {
-            // additionally, we want to create a variant to a new product
-            if (result) {
-              Products.insert({
-                ancestors: [result],
-                price: product.price,
-                title: "",
-                type: "variant" // needed for multi-schema
-              });
-            }
-          });
-      })
-      return;
-    })
-  }
+          ancestors: [result],
+          price: product.price,
+          title: "",
+          type: "variant" // needed for multi-schema
+        });
+      }
+    });
+    console.log(productId);
+  })
+  return;
+})
+}
 }
 
 
