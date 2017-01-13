@@ -105,7 +105,12 @@ export const methods = {
       var products=productList.wait().slice(0,3);
 
       //grab data for each product in list and add to reaction
+      var productCount = _.size(products);
+      var productNum = 1;
       products.forEach(function(data) {
+        updateStatus({product_status: "Updating product " + productNum + " of " + productCount});
+        productNum = productNum + 1;
+
         var productInfo = new Future();
         magento.catalog_product.info(data.product_id, function(err, product){
           productInfo.return(product);
@@ -123,56 +128,75 @@ export const methods = {
           magento_import_product_id: product.product_id
         }, {
           validate: false
-        }, (error, result) => {
-          // additionally, we want to create a variant to a new product
-          if (result) {
-            variantId = Products.insert({
-              ancestors: [result],
-              price: product.price,
-              title: "",
-              type: "variant" // needed for multi-schema
-            });
-          }
-        });
-        console.log(productId);
+        }
+      );
+      console.log(productId);
 
-        //images
-        var productImages = new Future();
-        magento.catalog_product_attribute_media.list(product.product_id, function(err, images) {
-          productImages.return(images);
-        })
-        var images = productImages.wait();
-        console.log(images);
-        images.forEach(function(data) {
-          let fileObj;
-          fileObj = new FS.File(data.url);
-          fileObj.metadata = {
-            ownerId: Meteor.userId,
-            productId: productId,
-            variantId: variantId,
-            shopId: Reaction.getShopId(),
-            priority: data.position,
-            toGrid: 1
-          };
-          Media.insert(fileObj);
-        })
-    /*
-    let fileObj;
-    fileObj = new FS.File(file);
-    fileObj.metadata = {
-      ownerId: userId,
-      productId: productId,
-      variantId: variantId,
-      shopId: shopId,
-      priority: count,
-      toGrid: +toGrid // we need number
-    };
-    Media.insert(fileObj);
-    */
+      //images
+      var productImages = new Future();
+      magento.catalog_product_attribute_media.list(product.product_id, function(err, images) {
+        productImages.return(images);
+      })
+      var images = productImages.wait();
+      console.log(images);
+      let imageNum = 0;
+      images.forEach(function(data) {
+        let fileObj;
+        fileObj = new FS.File(data.url);
+        fileObj.metadata = {
+          ownerId: Meteor.userId,
+          productId: productId,
+          //variantId: variantId,
+          shopId: Reaction.getShopId(),
+          priority: data.position,
+          toGrid: function() {if (imageNum = 0) {return 1} else {return 0}}
+        };
+        Media.insert(fileObj);
+        imageNum = imageNum + 1;
+      });
+
+      //product options (i.e. variants)
+      var productVariants = new Future();
+      magento.catalog_product_custom_option.list(product.product_id, (function(err, variants) {
+        productVariants.return(variants)
+      }));
+      productVariants.wait().forEach(function(variant) {
+        var variantId = Products.insert({
+          ancestors: [productId],
+          title: variant.title,
+          type: "variant" // needed for multi-schema
+        });
+        //get variant options
+        var productOptions = new Future();
+        magento.catalog_product_custom_option.info(variant.option_id, function(err, options) {
+          productOptions.return(options);
+        });
+        console.log(productOptions.wait());
+        productOptions.wait().additional_fields.forEach(function(option) {
+          console.log(option);
+          Products.insert({
+            ancestors: [productId, variantId],
+            optionTitle: option.title,
+            price: option.price,
+            sku: option.sku,
+            type: "variant"
+          })
+        });
+      });
+      updateStatus({product_status: "Finished import!"});
+    })
+    return;
   })
+},
+"magento-import/methods/deleteMagentoProducts": function () {
+  updateStatus({product_status: "Deleting..."});
+  Products.remove({});
+  Media.remove({});
+  updateStatus({product_status: "Ready"});
   return;
-})
-}
+},
+
+
 }
 
 

@@ -106,18 +106,13 @@ Template.magentoImportTable.events({
     });
   },
   "click [data-event-action=removeImportedProducts]"(event) {
-    event.preventDefault();
-    event.stopPropagation();
-    // confirm delete
-    Alerts.alert({
-      title: "Remove ALL imported prouducts?",
-      type: "warning",
-      showCancelButton: true,
-      confirmButtonText: "REMOVE"
-    }, (isConfirm) => {
-      if (isConfirm) {
-        Meteor.call("shipping/methods/remove", $(event.currentTarget).data("provider-id"), this);
-        Reaction.hideActionView();
+    Meteor.call("magento-import/methods/deleteMagentoProducts", function(err, result){
+      if (err) {
+        Alerts.alert({
+          title: result.error,
+          type: "error",
+          showCancelButton: false,
+        });
       }
     });
   }
