@@ -95,20 +95,30 @@ export const methods = {
 
     var magentoInit = Meteor.wrapAsync(magento.init, magento);
     magentoInit(function(err) {
+      //get list of manufacturers
+      var manufacturerList = new Future();
+      magento.catalog_product_attribute.info("manufacturer", function(err, manufacturers){
+        manufacturerList.return(manufacturers);
+      });
+      var manufacturers = manufacturerList.wait();
+
       //get product list
       var productList = new Future();
       magento.catalog_product.list(function(err, products) {
         productList.return(products);
       });
 
-      //TESTING: slice the array and only update 3 products:
+      //var proudctList = productList.wait();
+      //TESTING: slice the array and only update 3 active products:
+      //_.reject(productList, function(data) { return data.status === "2"; });
+
       var products=productList.wait().slice(0,3);
 
       //grab data for each product in list and add to reaction
       var productCount = _.size(products);
       var productNum = 1;
       products.forEach(function(data) {
-        updateStatus({product_status: "Updating product " + productNum + " of " + productCount});
+        updateStatus({product_status: "Adding product " + productNum + " of " + productCount});
         productNum = productNum + 1;
 
         var productInfo = new Future();
@@ -118,12 +128,18 @@ export const methods = {
         var product = productInfo.wait();
         console.log(product);
 
+        var manufacturer = _.find(manufacturers.options, function(obj) { return obj.value == product.manufacturer })
+        console.log("manufacturer: " + manufacturer.label);
+
         var variantId;
         var productId = Products.insert({
           type: "simple", // needed for multi-schema
           title: product.name,
+          isVisible: true,
           pageTitle: product.name,
           description: product.description,
+          price: product.price,
+          vendor: manufacturer.label,
           magento_import: true,
           magento_import_product_id: product.product_id
         }, {
@@ -139,9 +155,10 @@ export const methods = {
       })
       var images = productImages.wait();
       console.log(images);
-      let imageNum = 0;
       images.forEach(function(data) {
         let fileObj;
+        let toGrid = 0;
+        if (data.position == 1) { toGrid =  1};
         fileObj = new FS.File(data.url);
         fileObj.metadata = {
           ownerId: Meteor.userId,
@@ -149,10 +166,11 @@ export const methods = {
           //variantId: variantId,
           shopId: Reaction.getShopId(),
           priority: data.position,
-          toGrid: function() {if (imageNum = 0) {return 1} else {return 0}}
+          toGrid: toGrid
         };
+        console.log(fileObj);
+        console.log(toGrid);
         Media.insert(fileObj);
-        imageNum = imageNum + 1;
       });
 
       //product options (i.e. variants)
@@ -177,7 +195,8 @@ export const methods = {
           Products.insert({
             ancestors: [productId, variantId],
             optionTitle: option.title,
-            price: option.price,
+            label: option.title,
+            price:product.price,
             sku: option.sku,
             type: "variant"
           })
