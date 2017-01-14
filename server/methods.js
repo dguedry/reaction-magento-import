@@ -2,6 +2,7 @@ import { Reaction } from "/server/api";
 import { Packages } from "/lib/collections";
 import { Products } from "/lib/collections";
 import { Media } from "/lib/collections";
+import { Tags } from "/lib/collections";
 import { MagentoImportStatus } from "../lib/collections/schemas";
 import Future from 'fibers/future';
 import MagentoJS from "magentojs"
@@ -36,6 +37,26 @@ function getMagentoConfig(settings) {
     };
   }
   return config;
+};
+
+function createTags(categories) {
+  categories.forEach(function(data) {
+    if (data.level == 1) {
+      var isTopLevel = true;
+    } else { var isTopLevel = false};
+    var updatedAt = new Date;
+    var newTag = Tags.insert({
+      name: data.name,
+      position: data.level,
+      slug: data.category_id,
+      isTopLevel: isTopLevel,
+      updatedAt: updatedAt,
+      shopId: Reaction.getShopId(),
+    },{upsert: true});
+    if (data.children) {
+      createTags(data.children);
+    };
+  })
 }
 
 export const methods = {
@@ -88,6 +109,21 @@ export const methods = {
       });
       var manufacturers = manufacturerList.wait();
 
+      //get list of categories
+      updateStatus({product_status: 'Getting category tree...'});
+      var categoryStore = new Future();
+      magento.catalog_category.currentStore(storeId, function(err, storeId) {
+        categoryStore.return(storeId)
+      });
+      console.log(categoryStore.wait());
+
+      var categoryList = new Future();
+      magento.catalog_category.tree(function(err, categories) {
+        categoryList.return(categories);
+      })
+      console.log(categoryList.wait());
+      var categories = createTags([categoryList.wait()]);
+
       //get product list
       updateStatus({product_status: 'Getting product list...'});
       var productList = new Future();
@@ -117,7 +153,10 @@ export const methods = {
 
         var manufacturer = _.find(manufacturers.options, function(obj) { return obj.value == product.manufacturer })
         console.log("manufacturer: " + manufacturer.label);
-
+        console.log(product.categories);
+        var tags = Tags.find({shopId: Reaction.getShopId(),
+          slug: {$in : product.categories}}).fetch().map(function(obj) {return obj._id;});
+        console.log("tags: " + tags);
         var variantId;
         var productId = Products.insert({
           type: "simple", // needed for multi-schema
@@ -128,7 +167,8 @@ export const methods = {
           price: product.price,
           vendor: manufacturer.label,
           magento_import: true,
-          magento_import_product_id: product.product_id
+          magento_import_product_id: product.product_id,
+          hashtags: tags
         }, {
           validate: false
         }
