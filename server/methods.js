@@ -36,29 +36,6 @@ function getMagentoConfig(settings) {
     };
   }
   return config;
-
-  /*var client = MagentoJS(config);
-  var client2 = xmlrpc.createClient(config);
-  var result = new Future();
-  console.log(config);
-  client.methodCall('login', [ config.login, config.pass ], function(err, sessionId) {
-  if (err) {
-  console.log("Login Error: " + err);
-  response = {
-  successful : false,
-  error: err.message
-}
-} else {
-console.log('session-id:' + sessionId);
-response = {
-successful: true,
-client: client
-}
-}
-return result.return(response);
-});
-return result.wait();
-*/
 }
 
 export const methods = {
@@ -88,14 +65,23 @@ export const methods = {
     return stores.wait();
   },
   "magento-import/methods/importProducts": function (settings) {
-    updateStatus({product_status: 'Importing...'});
+    updateStatus({product_status: 'Connecting...'});
 
     magento = MagentoJS(getMagentoConfig(settings));
-    //var storeId = magento.options.storeId;
-
+    console.log(magento);
+    var storeId = magento.MagentoClient.options.storeId;
     var magentoInit = Meteor.wrapAsync(magento.init, magento);
+
     magentoInit(function(err) {
+      //set store
+      var setStore = new Future();
+      magento.catalog_product.currentStore(storeId, function(err, store) {
+        setStore.return (store)
+      });
+      var stores = setStore.wait();
+
       //get list of manufacturers
+      updateStatus({product_status: 'Getting manufacturer list...'});
       var manufacturerList = new Future();
       magento.catalog_product_attribute.info("manufacturer", function(err, manufacturers){
         manufacturerList.return(manufacturers);
@@ -103,8 +89,9 @@ export const methods = {
       var manufacturers = manufacturerList.wait();
 
       //get product list
+      updateStatus({product_status: 'Getting product list...'});
       var productList = new Future();
-      magento.catalog_product.list(function(err, products) {
+      magento.catalog_product.list([], storeId, function(err, products) {
         productList.return(products);
       });
 
