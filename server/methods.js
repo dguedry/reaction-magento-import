@@ -21,11 +21,11 @@ function updateLog(value, textType, newLine) {
     case 'header':
       value = '<h3>' + value + '</h3>';
       break;
-  }
+  };
   if (newLine) {
-    var break = '<br/>';
-  }
-  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + break + value}}, {upsert: true});
+    var breakChar = '<br/>';
+  };
+  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + breakChar + value}}, {upsert: true});
 }
 
 function getMagentoConfig(settings) {
