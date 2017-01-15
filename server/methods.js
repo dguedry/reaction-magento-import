@@ -4,6 +4,7 @@ import { Products } from "/lib/collections";
 import { Media } from "/lib/collections";
 import { Tags } from "/lib/collections";
 import { MagentoImportStatus } from "../lib/collections/schemas";
+import { ReactionProduct, getSlug } from "/lib/api";
 import Future from 'fibers/future';
 import MagentoJS from "magentojs"
 
@@ -24,6 +25,7 @@ function getMagentoConfig(settings) {
       login: magento.settings.user,
       pass: magento.settings.password,
       storeId: magento.settings.store,
+      categoryId: magento.settings.category,
       isSecure: true
     };
   } else {
@@ -39,25 +41,49 @@ function getMagentoConfig(settings) {
   return config;
 };
 
-function createTags(categories) {
-  categories.forEach(function(data) {
-    if (data.level == 1) {
+function createTagRelationships(categoryTree) {
+  var tagList = [];
+  categoryTree.forEach(function(data) {
+    var parentSlug = getSlug(data.name);
+    var parentTagId = Tags.findOne({slug: parentSlug})._id;
+    data.children.forEach(function(child) {
+      var childSlug = getSlug(child.name);
+      var childTagId = Tags.findOne({slug: childSlug})._id;
+      tagList.push(childTagId);
+      createTagRelationships(child.children);
+    })
+    Tags.update(parentTagId, {$set: {
+      relatedTagIds: tagList}
+    })
+    tagList = [];
+  })
+}
+
+function createTags(categoryTree, parentId) {
+  categoryTree.forEach(function(data) {
+    if (data.level == 2) {
       var isTopLevel = true;
     } else { var isTopLevel = false};
     var updatedAt = new Date;
-    var newTag = Tags.insert({
-      name: data.name,
-      position: data.level,
-      slug: data.category_id,
-      isTopLevel: isTopLevel,
-      updatedAt: updatedAt,
-      shopId: Reaction.getShopId(),
-    },{upsert: true});
+    var slug = getSlug(data.name);
+    var existingTag = Tags.findOne({slug: slug})
+    if (!existingTag) {
+      var newTag = Tags.insert({
+        name: data.name,
+        position: data.level,
+        slug: slug,
+        isTopLevel: isTopLevel,
+        shopId: Reaction.getShopId(),
+        updatedAt: updatedAt,
+        magento_category_id: data.category_id
+      });
+    }
     if (data.children) {
-      createTags(data.children);
+      createTags(data.children, newTag);
     };
   })
 }
+
 
 export const methods = {
   "magento-import/methods/testConnection": function (settings) {
@@ -91,6 +117,7 @@ export const methods = {
     magento = MagentoJS(getMagentoConfig(settings));
     console.log(magento);
     var storeId = magento.MagentoClient.options.storeId;
+    var categoryId = magento.MagentoClient.options.categoryId;
     var magentoInit = Meteor.wrapAsync(magento.init, magento);
 
     magentoInit(function(err) {
@@ -118,11 +145,12 @@ export const methods = {
       console.log(categoryStore.wait());
 
       var categoryList = new Future();
-      magento.catalog_category.tree(function(err, categories) {
+      magento.catalog_category.tree(categoryId, function(err, categories) {
         categoryList.return(categories);
       })
       console.log(categoryList.wait());
-      var categories = createTags([categoryList.wait()]);
+      var categories = createTags([categoryList.wait()], null);
+      var categoryRelationships = createTagRelationships([categoryList.wait()]);
 
       //get product list
       updateStatus({product_status: 'Getting product list...'});
@@ -154,8 +182,7 @@ export const methods = {
         var manufacturer = _.find(manufacturers.options, function(obj) { return obj.value == product.manufacturer })
         console.log("manufacturer: " + manufacturer.label);
         console.log(product.categories);
-        var tags = Tags.find({shopId: Reaction.getShopId(),
-          slug: {$in : product.categories}}).fetch().map(function(obj) {return obj._id;});
+        var tags = Tags.find({magento_category_id: {$in: product.categories}}).fetch().map(function (obj) { return obj._id});
         console.log("tags: " + tags);
         var variantId;
         var productId = Products.insert({
@@ -166,8 +193,7 @@ export const methods = {
           description: product.description,
           price: product.price,
           vendor: manufacturer.label,
-          magento_import: true,
-          magento_import_product_id: product.product_id,
+          magento_product_id: product.product_id,
           hashtags: tags
         }, {
           validate: false
