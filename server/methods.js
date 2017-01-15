@@ -12,7 +12,7 @@ function updateStatus(value) {
   MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: value}, {upsert: true});
 };
 
-function updateLog(value, textType) {
+function updateLog(value, textType, newLine) {
   var log = MagentoImportStatus.findOne({shopId: Reaction.getShopId()}).import_log || "";
   switch (textType) {
     case 'bold':
@@ -22,7 +22,10 @@ function updateLog(value, textType) {
       value = '<h3>' + value + '</h3>';
       break;
   }
-  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + "<br>" + value}}, {upsert: true});
+  if (newLine) {
+    var break = '<br/>';
+  }
+  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + break + value}}, {upsert: true});
 }
 
 function getMagentoConfig(settings) {
@@ -277,14 +280,14 @@ export const methods = {
         updateLog('Finished adding ' + data.name + '.', 'bold');
       });
     });
-    updateStatus({product_status: "Finished product import!"});
-    updateLog('Finished product import!', 'header');
+    updateStatus({product_status: "Finished. Imported " + productCount + " products."});
+    updateLog("Finished. Imported " + productCount + " products.", 'header');
     return;
   })
 },
 "magento-import/methods/deleteMagentoProducts": function () {
   updateStatus({product_status: "Deleting..."});
-  Products.find({magento_product_id: {$ne: null}}).fetch().forEach(function(data){
+  Products.find({magento_product_id: {$ne: null}}).forEach(function(data){
     Media.remove({productId: data._id});
   });
   Products.remove({magento_product_id: {$ne: null}});
