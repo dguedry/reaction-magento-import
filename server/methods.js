@@ -3,6 +3,7 @@ import { Packages } from "/lib/collections";
 import { Products } from "/lib/collections";
 import { Media } from "/lib/collections";
 import { Tags } from "/lib/collections";
+import { Revisions } from "/lib/collections";
 import { MagentoImportStatus } from "../lib/collections/schemas";
 import { ReactionProduct, getSlug } from "/lib/api";
 import Future from 'fibers/future';
@@ -12,7 +13,7 @@ function updateStatus(value) {
   MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: value}, {upsert: true});
 };
 
-function updateLog(value, textType, newLine) {
+function updateLog(value, textType) {
   var log = MagentoImportStatus.findOne({shopId: Reaction.getShopId()}).import_log || "";
   switch (textType) {
     case 'bold':
@@ -22,10 +23,7 @@ function updateLog(value, textType, newLine) {
       value = '<h3>' + value + '</h3>';
       break;
   };
-  if (newLine) {
-    var breakChar = '<br/>';
-  };
-  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + breakChar + value}}, {upsert: true});
+  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + value + '<br/>'}}, {upsert: true});
 }
 
 function getMagentoConfig(settings) {
@@ -166,12 +164,14 @@ export const methods = {
       var categoryList = new Future();
       magento.catalog_category.tree(categoryId, function(err, categories) {
         categoryList.return(categories);
-      })
+      });
       console.log(categoryList.wait());
-      updateLog('Finished getting category tree.', 'bold')
-      updateLog('Converting Magento categories to tags...', 'header')
-      var categories = createTags([categoryList.wait()], null);
-      var categoryRelationships = createTagRelationships([categoryList.wait()]);
+      updateLog('Finished getting category tree.', 'bold');
+      updateLog('Converting Magento categories to tags...', 'header');
+      var returnedCategories = categoryList.wait();
+      //only interested in the specified categories children
+      var categories = createTags(returnedCategories.children, null);
+      var categoryRelationships = createTagRelationships(returnedCategories.children);
       updateLog('Finished converting Magento categories to tags.','bold')
       //get product list
       updateStatus({product_status: 'Getting product list...'});
@@ -289,6 +289,7 @@ export const methods = {
   updateStatus({product_status: "Deleting..."});
   Products.find({magento_product_id: {$ne: null}}).forEach(function(data){
     Media.remove({productId: data._id});
+    Revisions.remove({documentId: data._id});
   });
   Products.remove({magento_product_id: {$ne: null}});
   Tags.remove({magento_category_id: {$ne: null}})
