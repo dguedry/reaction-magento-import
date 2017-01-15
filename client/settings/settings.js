@@ -72,6 +72,9 @@ Template.magentoImportTable.helpers({
   productImportStatus: function() {
     return MagentoImportStatus.findOne({shopId: Reaction.getShopId()}).product_status;
   },
+  productImportLog: function() {
+    return MagentoImportStatus.findOne({shopId: Reaction.getShopId()}).import_log;
+  },
   storeList: function() {
     Meteor.call("magento-import/methods/getStores", function(err, result) {
       if (result) {

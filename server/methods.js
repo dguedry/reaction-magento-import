@@ -9,7 +9,20 @@ import Future from 'fibers/future';
 import MagentoJS from "magentojs"
 
 function updateStatus(value) {
-  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: value});
+  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: value}, {upsert: true});
+};
+
+function updateLog(value, textType) {
+  var log = MagentoImportStatus.findOne({shopId: Reaction.getShopId()}).import_log || "";
+  switch (textType) {
+    case 'bold':
+      value = '<b>' + value + '</b>';
+      break;
+    case 'header':
+      value = '<h3>' + value + '</h3>';
+      break;
+  }
+  MagentoImportStatus.update({shopId: Reaction.getShopId()}, {$set: {import_log: log + "<br>" + value}}, {upsert: true});
 }
 
 function getMagentoConfig(settings) {
@@ -43,15 +56,14 @@ function getMagentoConfig(settings) {
 
 function createTagRelationships(categoryTree) {
   var tagList = [];
-  categoryTree.forEach(function(data) {
-    var parentSlug = getSlug(data.name);
-    var parentTagId = Tags.findOne({slug: parentSlug})._id;
-    data.children.forEach(function(child) {
-      var childSlug = getSlug(child.name);
-      var childTagId = Tags.findOne({slug: childSlug})._id;
+  console.log(categoryTree);
+  categoryTree.forEach(function(parent) {
+    var parentTagId = Tags.findOne({magento_category_id: parent.category_id})._id;
+    parent.children.forEach(function(child) {
+      var childTagId = Tags.findOne({magento_category_id: child.category_id})._id;
       tagList.push(childTagId);
       createTagRelationships(child.children);
-    })
+    });
     Tags.update(parentTagId, {$set: {
       relatedTagIds: tagList}
     })
@@ -59,14 +71,14 @@ function createTagRelationships(categoryTree) {
   })
 }
 
-function createTags(categoryTree, parentId) {
+function createTags(categoryTree) {
   categoryTree.forEach(function(data) {
     if (data.level == 2) {
       var isTopLevel = true;
     } else { var isTopLevel = false};
     var updatedAt = new Date;
     var slug = getSlug(data.name);
-    var existingTag = Tags.findOne({slug: slug})
+    var existingTag = Tags.findOne({magento_category_id: data.category_id })
     if (!existingTag) {
       var newTag = Tags.insert({
         name: data.name,
@@ -79,7 +91,7 @@ function createTags(categoryTree, parentId) {
       });
     }
     if (data.children) {
-      createTags(data.children, newTag);
+      createTags(data.children);
     };
   })
 }
@@ -112,15 +124,17 @@ export const methods = {
     return stores.wait();
   },
   "magento-import/methods/importProducts": function (settings) {
-    updateStatus({product_status: 'Connecting...'});
 
     magento = MagentoJS(getMagentoConfig(settings));
-    console.log(magento);
+    updateStatus({product_status: 'Connecting...'});
+    updateLog('Connecting to ' + magento.MagentoClient.options.host + '...');
+
     var storeId = magento.MagentoClient.options.storeId;
     var categoryId = magento.MagentoClient.options.categoryId;
     var magentoInit = Meteor.wrapAsync(magento.init, magento);
 
     magentoInit(function(err) {
+      updateLog('Connected to ' + magento.MagentoClient.options.host + '.', 'bold');
       //set store
       var setStore = new Future();
       magento.catalog_product.currentStore(storeId, function(err, store) {
@@ -130,14 +144,16 @@ export const methods = {
 
       //get list of manufacturers
       updateStatus({product_status: 'Getting manufacturer list...'});
+      updateLog('Getting manufacturer list...', 'header');
       var manufacturerList = new Future();
       magento.catalog_product_attribute.info("manufacturer", function(err, manufacturers){
         manufacturerList.return(manufacturers);
       });
       var manufacturers = manufacturerList.wait();
-
+      updateLog('Finished getting manufacturer list.', 'bold')
       //get list of categories
       updateStatus({product_status: 'Getting category tree...'});
+      updateLog('Getting category tree...', 'header')
       var categoryStore = new Future();
       magento.catalog_category.currentStore(storeId, function(err, storeId) {
         categoryStore.return(storeId)
@@ -149,11 +165,14 @@ export const methods = {
         categoryList.return(categories);
       })
       console.log(categoryList.wait());
+      updateLog('Finished getting category tree.', 'bold')
+      updateLog('Converting Magento categories to tags...', 'header')
       var categories = createTags([categoryList.wait()], null);
       var categoryRelationships = createTagRelationships([categoryList.wait()]);
-
+      updateLog('Finished converting Magento categories to tags.','bold')
       //get product list
       updateStatus({product_status: 'Getting product list...'});
+      updateLog('Getting product list...', 'header')
       var productList = new Future();
       magento.catalog_product.list([], storeId, function(err, products) {
         productList.return(products);
@@ -164,12 +183,14 @@ export const methods = {
       //_.reject(productList, function(data) { return data.status === "2"; });
 
       var products=productList.wait().slice(0,3);
-
+      updateLog('Finished getting product list.','bold')
       //grab data for each product in list and add to reaction
+      updateLog('Importing products.','header');
       var productCount = _.size(products);
       var productNum = 1;
       products.forEach(function(data) {
         updateStatus({product_status: "Adding product " + productNum + " of " + productCount});
+        updateLog('Adding product ' + data.name + '(' + productNum + ' of ' + productCount + ')', 'bold')
         productNum = productNum + 1;
 
         var productInfo = new Future();
@@ -180,10 +201,7 @@ export const methods = {
         console.log(product);
 
         var manufacturer = _.find(manufacturers.options, function(obj) { return obj.value == product.manufacturer })
-        console.log("manufacturer: " + manufacturer.label);
-        console.log(product.categories);
         var tags = Tags.find({magento_category_id: {$in: product.categories}}).fetch().map(function (obj) { return obj._id});
-        console.log("tags: " + tags);
         var variantId;
         var productId = Products.insert({
           type: "simple", // needed for multi-schema
@@ -199,9 +217,8 @@ export const methods = {
           validate: false
         }
       );
-      console.log(productId);
-
-      //images
+      //product images
+      updateLog('Adding ' + data.name + ' images.')
       var productImages = new Future();
       magento.catalog_product_attribute_media.list(product.product_id, function(err, images) {
         productImages.return(images);
@@ -216,7 +233,7 @@ export const methods = {
         fileObj.metadata = {
           ownerId: Meteor.userId,
           productId: productId,
-          //variantId: variantId,
+          variantId: productId,
           shopId: Reaction.getShopId(),
           priority: data.position,
           toGrid: toGrid
@@ -225,8 +242,10 @@ export const methods = {
         console.log(toGrid);
         Media.insert(fileObj);
       });
+      updateLog('Finished adding ' + data.name + ' images.')
 
       //product options (i.e. variants)
+      updateLog('Adding ' + data.name + ' options (variants).');
       var productVariants = new Future();
       magento.catalog_product_custom_option.list(product.product_id, (function(err, variants) {
         productVariants.return(variants)
@@ -254,17 +273,25 @@ export const methods = {
             type: "variant"
           })
         });
+        updateLog('Finished adding ' + data.name + ' options.');
+        updateLog('Finished adding ' + data.name + '.', 'bold');
       });
-      updateStatus({product_status: "Finished import!"});
-    })
+    });
+    updateStatus({product_status: "Finished product import!"});
+    updateLog('Finished product import!', 'header');
     return;
   })
 },
 "magento-import/methods/deleteMagentoProducts": function () {
   updateStatus({product_status: "Deleting..."});
-  Products.remove({});
-  Media.remove({});
+  Products.find({magento_product_id: {$ne: null}}).fetch().forEach(function(data){
+    Media.remove({productId: data._id});
+  });
+  Products.remove({magento_product_id: {$ne: null}});
+  Tags.remove({magento_category_id: {$ne: null}})
   updateStatus({product_status: "Ready"});
+  updateStatus({import_log: ""});
+
   return;
 },
 
